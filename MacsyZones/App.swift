@@ -248,7 +248,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Sen
                 }
             }
             
-            appUpdater.checkForUpdates()
+            // Auto update has been disabled as requested
+            // appUpdater.checkForUpdates()
         }
     }
     
@@ -508,3 +509,4 @@ func restartApp() {
     
     NSApp.terminate(nil)
 }
+

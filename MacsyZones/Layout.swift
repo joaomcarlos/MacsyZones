@@ -87,17 +87,34 @@ struct SectionView: View {
 
 class EditorSectionView: NSView {
     var onDelete: (() -> Void)?
-    
+    var sectionWindow: SectionWindow?
+
     var number: Int = 0 {
         didSet {
             label.stringValue = String(number)
         }
     }
-    
+
     private let background = NSView()
-    
+
     private let label = NSTextField(labelWithString: "")
     private let sizeLabel = NSTextField(labelWithString: "")
+    private let sizeLabelInteractionView = NSView()
+    private let dimensionTextField = NSTextField()
+    private let evaluatedLabel = NSTextField(labelWithString: "")
+    private let pixelLabel = NSTextField(labelWithString: "")
+
+    private var isEditingDimensions = false {
+        didSet {
+            debugLog("📝 isEditingDimensions changed: \(oldValue) → \(isEditingDimensions)")
+            if let editorWindow = sectionWindow?.editorWindow as? EditorSectionWindow {
+                editorWindow.isEditingDimensions = isEditingDimensions
+                debugLog("   ✅ Synced window.isEditingDimensions = \(isEditingDimensions)")
+            }
+        }
+    }
+    private var dimensionExpression: String?
+    private var originalWindowLevel: NSWindow.Level?
 
     private let circleView = NSView()
     private let deleteButton = NSButton()
@@ -152,6 +169,54 @@ class EditorSectionView: NSView {
         sizeLabel.shadow?.shadowBlurRadius = 2
         addSubview(sizeLabel)
 
+        dimensionTextField.font = NSFont.systemFont(ofSize: 20, weight: .light)
+        dimensionTextField.textColor = NSColor.controlAccentColor.withAlphaComponent(0.85)
+        dimensionTextField.alignment = .center
+        dimensionTextField.isEditable = true
+        dimensionTextField.isSelectable = true
+        dimensionTextField.isBezeled = true
+        dimensionTextField.bezelStyle = .roundedBezel
+        dimensionTextField.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.9)
+        dimensionTextField.drawsBackground = true
+        dimensionTextField.focusRingType = .default
+        dimensionTextField.placeholderString = "e.g., w/2 x h/3 or 800 x 600"
+        dimensionTextField.delegate = self
+        dimensionTextField.isHidden = true
+        addSubview(dimensionTextField)
+
+        evaluatedLabel.font = NSFont.systemFont(ofSize: 14, weight: .light)
+        evaluatedLabel.textColor = NSColor.controlAccentColor.withAlphaComponent(0.65)
+        evaluatedLabel.alignment = .center
+        evaluatedLabel.isEditable = false
+        evaluatedLabel.isSelectable = false
+        evaluatedLabel.isBezeled = false
+        evaluatedLabel.backgroundColor = .clear
+        evaluatedLabel.drawsBackground = false
+        evaluatedLabel.shadow = NSShadow()
+        evaluatedLabel.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.3)
+        evaluatedLabel.shadow?.shadowOffset = NSSize(width: 0, height: -1)
+        evaluatedLabel.shadow?.shadowBlurRadius = 1
+        evaluatedLabel.isHidden = true
+        addSubview(evaluatedLabel)
+
+        pixelLabel.font = NSFont.systemFont(ofSize: 14, weight: .light)
+        pixelLabel.textColor = NSColor.controlAccentColor.withAlphaComponent(0.65)
+        pixelLabel.alignment = .center
+        pixelLabel.isEditable = false
+        pixelLabel.isSelectable = false
+        pixelLabel.isBezeled = false
+        pixelLabel.backgroundColor = .clear
+        pixelLabel.drawsBackground = false
+        pixelLabel.shadow = NSShadow()
+        pixelLabel.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.3)
+        pixelLabel.shadow?.shadowOffset = NSSize(width: 0, height: -1)
+        pixelLabel.shadow?.shadowBlurRadius = 1
+        pixelLabel.isHidden = true
+        addSubview(pixelLabel)
+
+        sizeLabelInteractionView.wantsLayer = true
+        addSubview(sizeLabelInteractionView, positioned: .above, relativeTo: sizeLabel)
+
         circleView.wantsLayer = true
         circleView.layer = CALayer()
         circleView.layer?.cornerRadius = 75
@@ -166,7 +231,7 @@ class EditorSectionView: NSView {
         ).cgColor
         circleView.layer?.borderWidth = 2
         addSubview(circleView)
-        
+
         deleteButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete")?.withSymbolConfiguration(.init(pointSize: 18, weight: .regular))
         deleteButton.frame.size = CGSize(width: 80, height: 80)
         deleteButton.imagePosition = .imageOnly
@@ -182,7 +247,11 @@ class EditorSectionView: NSView {
         
         label.translatesAutoresizingMaskIntoConstraints = false
         sizeLabel.translatesAutoresizingMaskIntoConstraints = false
+        dimensionTextField.translatesAutoresizingMaskIntoConstraints = false
+        evaluatedLabel.translatesAutoresizingMaskIntoConstraints = false
+        pixelLabel.translatesAutoresizingMaskIntoConstraints = false
         circleView.translatesAutoresizingMaskIntoConstraints = false
+        sizeLabelInteractionView.translatesAutoresizingMaskIntoConstraints = false
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
@@ -190,13 +259,29 @@ class EditorSectionView: NSView {
             circleView.centerYAnchor.constraint(equalTo: centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 150),
             circleView.heightAnchor.constraint(equalTo: circleView.widthAnchor),
-            
+
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             sizeLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             sizeLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 110),
-            
+            sizeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+
+            pixelLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pixelLabel.topAnchor.constraint(equalTo: sizeLabel.bottomAnchor, constant: 2),
+
+            dimensionTextField.centerXAnchor.constraint(equalTo: centerXAnchor),
+            dimensionTextField.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 110),
+            dimensionTextField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+
+            evaluatedLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            evaluatedLabel.topAnchor.constraint(equalTo: dimensionTextField.bottomAnchor, constant: 4),
+
+            sizeLabelInteractionView.centerXAnchor.constraint(equalTo: sizeLabel.centerXAnchor),
+            sizeLabelInteractionView.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
+            sizeLabelInteractionView.widthAnchor.constraint(equalTo: sizeLabel.widthAnchor, constant: 20),
+            sizeLabelInteractionView.heightAnchor.constraint(equalToConstant: 40),
+
             deleteButton.topAnchor.constraint(equalTo: topAnchor, constant: 20),
             deleteButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20)
         ])
@@ -212,11 +297,371 @@ class EditorSectionView: NSView {
     
     override func layout() {
         super.layout()
-        sizeLabel.stringValue = "\(Int(bounds.width))x\(Int(bounds.height))"
+        if !isEditingDimensions {
+            updateSizeLabelDisplay()
+        }
     }
     
     @objc private func deleteSection() {
         onDelete?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 && !isEditingDimensions {
+            enterDimensionEditMode()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        debugLog("🖱️ mouseDown - clickCount: \(event.clickCount), isEditingDimensions: \(isEditingDimensions)")
+        if event.clickCount == 2 {
+            let location = convert(event.locationInWindow, from: nil)
+            debugLog("   Double-click at: \(location)")
+            debugLog("   sizeLabelInteractionView frame: \(sizeLabelInteractionView.frame)")
+            if sizeLabelInteractionView.frame.contains(location) {
+                debugLog("   ✅ Click is in size label interaction area")
+                if isEditingDimensions {
+                    debugLog("   ℹ️ Already editing, ignoring double-click")
+                    return
+                }
+                enterDimensionEditMode()
+                return
+            } else {
+                debugLog("   ❌ Click is NOT in size label interaction area")
+            }
+        }
+
+        if isEditingDimensions {
+            let location = convert(event.locationInWindow, from: nil)
+            // Allow clicks on the text field and its surrounding area
+            if dimensionTextField.frame.contains(location) || evaluatedLabel.frame.contains(location) {
+                debugLog("   ✅ Click on text field area - allowing event to pass through")
+                super.mouseDown(with: event)
+                return
+            }
+            // For clicks outside the text field while editing, just consume them
+            debugLog("   🚫 Click while editing (outside text field) - consuming event")
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+
+    private func enterDimensionEditMode() {
+        guard !isEditingDimensions else {
+            debugLog("❌ Already editing dimensions, returning")
+            return
+        }
+        guard let sectionWindow = sectionWindow else {
+            debugLog("❌ No section window")
+            return
+        }
+        guard let screen = sectionWindow.editorWindow.screen else {
+            debugLog("❌ No screen")
+            return
+        }
+
+        debugLog("✅ Starting enterDimensionEditMode")
+        debugLog("   Window before changes:")
+        debugLog("   - Level: \(sectionWindow.editorWindow.level.rawValue)")
+        debugLog("   - isKeyWindow: \(sectionWindow.editorWindow.isKeyWindow)")
+        debugLog("   - canBecomeKey: \(sectionWindow.editorWindow.canBecomeKey)")
+        debugLog("   - canBecomeMain: \(sectionWindow.editorWindow.canBecomeMain)")
+        debugLog("   - firstResponder: \(String(describing: sectionWindow.editorWindow.firstResponder))")
+
+        isEditingDimensions = true
+
+        originalWindowLevel = sectionWindow.editorWindow.level
+        sectionWindow.editorWindow.level = .normal
+        debugLog("   Changed window level from \(originalWindowLevel?.rawValue ?? 0) to \(sectionWindow.editorWindow.level.rawValue)")
+
+        sectionWindow.editorWindow.isMovable = false
+        sectionWindow.editorWindow.isMovableByWindowBackground = false
+
+        sizeLabel.isHidden = true
+        sizeLabelInteractionView.isHidden = true
+
+        if let expr = dimensionExpression {
+            dimensionTextField.stringValue = expr
+        } else {
+            let currentWidth = Int(bounds.width)
+            let currentHeight = Int(bounds.height)
+            dimensionTextField.stringValue = "\(currentWidth) x \(currentHeight)"
+        }
+
+        debugLog("   TextField configuration:")
+        debugLog("   - isEditable: \(dimensionTextField.isEditable)")
+        debugLog("   - isSelectable: \(dimensionTextField.isSelectable)")
+        debugLog("   - isEnabled: \(dimensionTextField.isEnabled)")
+        debugLog("   - acceptsFirstResponder: \(dimensionTextField.acceptsFirstResponder)")
+
+        dimensionTextField.isHidden = false
+        debugLog("   TextField shown")
+
+        let screenSize = screen.frame.size
+        if let expr = dimensionTextField.stringValue.isEmpty ? nil : dimensionTextField.stringValue {
+            updateEvaluatedLabel(expression: expr, screenWidth: screenSize.width, screenHeight: screenSize.height)
+        }
+
+        debugLog("   Activating app...")
+        NSApp.activate(ignoringOtherApps: true)
+        debugLog("   App active: \(NSApp.isActive)")
+
+        debugLog("   Making window key and front...")
+        sectionWindow.editorWindow.makeKeyAndOrderFront(nil)
+
+        debugLog("   Window after makeKeyAndOrderFront:")
+        debugLog("   - isKeyWindow: \(sectionWindow.editorWindow.isKeyWindow)")
+        debugLog("   - isMainWindow: \(sectionWindow.editorWindow.isMainWindow)")
+        debugLog("   - firstResponder: \(String(describing: sectionWindow.editorWindow.firstResponder))")
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else {
+                debugLog("❌ self is nil in async block")
+                return
+            }
+            guard let window = self.sectionWindow?.editorWindow else {
+                debugLog("❌ window is nil in async block")
+                return
+            }
+
+            debugLog("   In async block:")
+            debugLog("   - Window isKeyWindow: \(window.isKeyWindow)")
+            debugLog("   - Window firstResponder: \(String(describing: window.firstResponder))")
+            debugLog("   - NSApp.keyWindow: \(String(describing: NSApp.keyWindow))")
+            debugLog("   - NSApp.keyWindow == window: \(NSApp.keyWindow == window)")
+
+            let result = window.makeFirstResponder(self.dimensionTextField)
+            debugLog("   makeFirstResponder result: \(result)")
+
+            let fieldEditor = self.dimensionTextField.currentEditor()
+
+            debugLog("   After makeFirstResponder:")
+            debugLog("   - Window isKeyWindow: \(window.isKeyWindow)")
+            debugLog("   - Window firstResponder: \(String(describing: window.firstResponder))")
+            debugLog("   - TextField acceptsFirstResponder: \(self.dimensionTextField.acceptsFirstResponder)")
+            debugLog("   - NSApp.keyWindow: \(String(describing: NSApp.keyWindow))")
+            debugLog("   - NSApp.keyWindow == window: \(NSApp.keyWindow == window)")
+            debugLog("   - Field editor: \(String(describing: fieldEditor))")
+
+            if window.firstResponder == self.dimensionTextField {
+                debugLog("✅ TextField is now first responder")
+            } else if let editor = fieldEditor, window.firstResponder === editor {
+                debugLog("✅ Field editor is first responder for dimensionTextField")
+            } else if let responder = window.firstResponder {
+                debugLog("❌ First responder is: \(String(describing: type(of: responder)))")
+            } else {
+                debugLog("❌ No first responder")
+            }
+
+            if let editor = fieldEditor {
+                editor.isRichText = false
+                editor.importsGraphics = false
+                editor.selectedRange = NSRange(location: 0, length: editor.string.utf16.count)
+                debugLog("   ✅ Selected all text in field editor")
+            } else {
+                debugLog("   ⚠️ dimensionTextField.currentEditor() is nil after makeFirstResponder")
+            }
+        }
+    }
+
+    private func exitDimensionEditMode(applyChanges: Bool) {
+        guard isEditingDimensions else { return }
+        guard let sectionWindow = sectionWindow else { return }
+
+        debugLog("🚪 Exiting dimension edit mode - applyChanges: \(applyChanges)")
+
+        if applyChanges {
+            applyDimensionChanges()
+        }
+
+        isEditingDimensions = false
+
+        if let originalLevel = originalWindowLevel {
+            sectionWindow.editorWindow.level = originalLevel
+            originalWindowLevel = nil
+            debugLog("   ✅ Restored window level to \(originalLevel.rawValue)")
+        }
+
+        sectionWindow.editorWindow.isMovable = true
+        sectionWindow.editorWindow.isMovableByWindowBackground = true
+
+        dimensionTextField.isHidden = true
+        evaluatedLabel.isHidden = true
+        sizeLabel.isHidden = false
+        sizeLabelInteractionView.isHidden = false
+
+        updateSizeLabelDisplay()
+        debugLog("   ✅ Exit complete")
+    }
+
+    private func applyDimensionChanges() {
+        guard let sectionWindow = sectionWindow else { return }
+        guard let screen = sectionWindow.editorWindow.screen else { return }
+
+        let screenSize = screen.frame.size
+        let input = dimensionTextField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let parts = input.split(separator: "x", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+
+        guard parts.count == 2 else {
+            showValidationError(for: dimensionTextField)
+            return
+        }
+
+        let widthExpr = parts[0]
+        let heightExpr = parts[1]
+
+        guard let newWidth = evaluateExpression(widthExpr, screenWidth: screenSize.width, screenHeight: screenSize.height),
+              let newHeight = evaluateExpression(heightExpr, screenWidth: screenSize.width, screenHeight: screenSize.height) else {
+            showValidationError(for: dimensionTextField)
+            return
+        }
+
+        let minimumSize: CGFloat = 100
+
+        guard newWidth >= minimumSize && newHeight >= minimumSize else {
+            showValidationError(for: dimensionTextField)
+            return
+        }
+
+        guard newWidth <= screenSize.width && newHeight <= screenSize.height else {
+            showValidationError(for: dimensionTextField)
+            return
+        }
+
+        let isExpression = !widthExpr.allSatisfy { $0.isNumber } || !heightExpr.allSatisfy { $0.isNumber }
+        if isExpression {
+            dimensionExpression = input
+        } else {
+            dimensionExpression = nil
+        }
+
+        var newFrame = sectionWindow.editorWindow.frame
+        newFrame.size.width = newWidth
+        newFrame.size.height = newHeight
+
+        sectionWindow.editorWindow.setFrame(newFrame, display: true, animate: true)
+    }
+
+    private func updateEvaluatedLabel(expression: String, screenWidth: CGFloat, screenHeight: CGFloat) {
+        let parts = expression.split(separator: "x", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+
+        guard parts.count == 2 else {
+            evaluatedLabel.isHidden = true
+            return
+        }
+
+        let widthExpr = parts[0]
+        let heightExpr = parts[1]
+
+        let isExpression = !widthExpr.allSatisfy { $0.isNumber } || !heightExpr.allSatisfy { $0.isNumber }
+
+        if isExpression,
+           let width = evaluateExpression(widthExpr, screenWidth: screenWidth, screenHeight: screenHeight),
+           let height = evaluateExpression(heightExpr, screenWidth: screenWidth, screenHeight: screenHeight) {
+            evaluatedLabel.stringValue = "\(Int(width)) x \(Int(height))"
+            evaluatedLabel.isHidden = false
+        } else {
+            evaluatedLabel.isHidden = true
+        }
+    }
+
+    private func updateSizeLabelDisplay() {
+        if let expr = dimensionExpression {
+            sizeLabel.stringValue = expr
+            pixelLabel.stringValue = "\(Int(bounds.width)) x \(Int(bounds.height))"
+            pixelLabel.isHidden = false
+        } else {
+            sizeLabel.stringValue = "\(Int(bounds.width)) x \(Int(bounds.height))"
+            pixelLabel.isHidden = true
+        }
+    }
+
+    private func evaluateExpression(_ expression: String, screenWidth: CGFloat, screenHeight: CGFloat) -> CGFloat? {
+        var expr = expression.lowercased()
+            .replacingOccurrences(of: " ", with: "")
+
+        expr = expr.replacingOccurrences(of: "w", with: "\(screenWidth)")
+        expr = expr.replacingOccurrences(of: "h", with: "\(screenHeight)")
+
+        let mathExpression = NSExpression(format: expr)
+
+        guard let result = mathExpression.expressionValue(with: nil, context: nil) as? NSNumber else {
+            return nil
+        }
+
+        return CGFloat(truncating: result)
+    }
+
+    private func showValidationError(for textField: NSTextField) {
+        textField.backgroundColor = NSColor.systemRed.withAlphaComponent(0.2)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            textField.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.9)
+        }
+    }
+
+    private func updateSizeLabel() {
+        sizeLabel.stringValue = "\(Int(bounds.width))x\(Int(bounds.height))"
+    }
+}
+
+extension EditorSectionView: NSTextFieldDelegate {
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        debugLog("⌨️ control:doCommandBy: \(commandSelector)")
+        if control == dimensionTextField {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                debugLog("   ↩️ Enter pressed - applying changes")
+                exitDimensionEditMode(applyChanges: true)
+                return true
+            } else if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                debugLog("   ⎋ Escape pressed - canceling")
+                exitDimensionEditMode(applyChanges: false)
+                return true
+            }
+        }
+        return false
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        debugLog("⌨️ controlTextDidChange called")
+        guard let textField = obj.object as? NSTextField, textField == dimensionTextField else {
+            debugLog("   ❌ Not our text field")
+            return
+        }
+        debugLog("   ✅ Text changed: '\(textField.stringValue)'")
+        guard let sectionWindow = sectionWindow else { return }
+        guard let screen = sectionWindow.editorWindow.screen else { return }
+
+        let screenSize = screen.frame.size
+        updateEvaluatedLabel(expression: textField.stringValue, screenWidth: screenSize.width, screenHeight: screenSize.height)
+
+        let input = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = input.split(separator: "x", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+
+        guard parts.count == 2 else { return }
+
+        let widthExpr = parts[0]
+        let heightExpr = parts[1]
+
+        guard let newWidth = evaluateExpression(widthExpr, screenWidth: screenSize.width, screenHeight: screenSize.height),
+              let newHeight = evaluateExpression(heightExpr, screenWidth: screenSize.width, screenHeight: screenSize.height) else {
+            return
+        }
+
+        let minimumSize: CGFloat = 100
+
+        guard newWidth >= minimumSize && newHeight >= minimumSize else { return }
+        guard newWidth <= screenSize.width && newHeight <= screenSize.height else { return }
+
+        var newFrame = sectionWindow.editorWindow.frame
+        newFrame.size.width = newWidth
+        newFrame.size.height = newHeight
+
+        sectionWindow.editorWindow.setFrame(newFrame, display: true, animate: false)
     }
 }
 
@@ -465,9 +910,38 @@ class EditorSectionWindowDelegate: NSObject, NSWindowDelegate {
 }
 
 class EditorSectionWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-    override var areCursorRectsEnabled: Bool { true }
+    var isEditingDimensions = false {
+        didSet {
+            debugLog("🪟 Window.isEditingDimensions changed: \(oldValue) → \(isEditingDimensions)")
+            debugLog("   Stack trace: \(Thread.callStackSymbols.prefix(5).joined(separator: "\n   "))")
+        }
+    }
+
+    override var canBecomeKey: Bool {
+        debugLog("🪟 EditorSectionWindow.canBecomeKey called - returning true")
+        return true
+    }
+    override var canBecomeMain: Bool {
+        debugLog("🪟 EditorSectionWindow.canBecomeMain called - returning true")
+        return true
+    }
+
+    override var acceptsFirstResponder: Bool {
+        debugLog("🪟 EditorSectionWindow.acceptsFirstResponder called - returning true")
+        return true
+    }
+
+    override func becomeKey() {
+        debugLog("🪟 EditorSectionWindow.becomeKey() called")
+        super.becomeKey()
+        debugLog("🪟 EditorSectionWindow.becomeKey() completed - isKeyWindow: \(self.isKeyWindow)")
+    }
+
+    override func resignKey() {
+        debugLog("🪟 EditorSectionWindow.resignKey() called - isEditingDimensions: \(isEditingDimensions)")
+        super.resignKey()
+        debugLog("   ✅ resignKey() completed")
+    }
 }
 
 class SectionWindow: Hashable, ObservableObject {
@@ -537,6 +1011,7 @@ class SectionWindow: Hashable, ObservableObject {
         editorWindow.standardWindowButton(.zoomButton)?.isHidden = false
         
         let editorSectionView = EditorSectionView(frame: NSRect(x: 0, y: 0, width: contentRect.width, height: contentRect.height))
+        editorSectionView.sectionWindow = self
         editorSectionView.onDelete = { [unowned self] in
             onDelete(self)
         }
@@ -1541,4 +2016,3 @@ struct SnapResizerView: View {
 
 #Preview {
 }
-
